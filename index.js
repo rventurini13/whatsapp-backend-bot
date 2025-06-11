@@ -16,7 +16,7 @@ const clients = new Map();
 const qrCodes = new Map();
 const clientStatus = new Map();
 
-// NOVO: Sistema de conversas ativas
+// Sistema de conversas ativas
 const activeConversations = new Map(); // phoneNumber -> conversationState
 const userBotConfigs = new Map(); // userId -> botConfig
 
@@ -30,7 +30,7 @@ const CONVERSATION_STATES = {
   COMPLETED: 'completed'
 };
 
-// NOVO: Configuração padrão do bot para cada usuário
+// Configuração padrão do bot para cada usuário
 const DEFAULT_BOT_CONFIG = {
   welcomeMessage: "Olá! Bem-vindo ao nosso atendimento automatizado. Como posso ajudá-lo?",
   servicesMessage: "Escolha um dos nossos serviços:",
@@ -43,7 +43,7 @@ const DEFAULT_BOT_CONFIG = {
   backOption: "Digite 0 para voltar ao menu anterior."
 };
 
-// NOVO: Dados mock para teste (depois vamos integrar com banco de dados)
+// Dados mock para teste (depois vamos integrar com Supabase)
 const MOCK_SERVICES = {
   'reventurini_hotmail_com': [
     { id: 1, name: 'Corte de Cabelo Masculino', duration: 60, price: 60 },
@@ -102,12 +102,38 @@ function findChromiumPath() {
   return undefined;
 }
 
-// NOVO: Função para processar mensagens recebidas do WhatsApp
+// Função utilitária para extrair números da mensagem
+function extractNumber(text) {
+  // Procurar por dígitos na mensagem
+  const numbers = text.match(/\d+/);
+  return numbers ? parseInt(numbers[0]) : -1;
+}
+
+// Função melhorada para formatar data
+function formatDate(date) {
+  const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+  const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  
+  const dayName = days[date.getDay()];
+  const day = date.getDate().toString().padStart(2, '0');
+  const month = months[date.getMonth()];
+  
+  return `${dayName}, ${day} de ${month}`;
+}
+
+// Função melhorada para processar mensagens recebidas do WhatsApp
 async function processIncomingMessage(userId, phoneNumber, messageText, client) {
-  console.log(`[${userId}] Mensagem recebida de ${phoneNumber}: ${messageText}`);
+  console.log(`[${userId}] Mensagem recebida de ${phoneNumber}: "${messageText}"`);
   
   const conversationKey = `${userId}:${phoneNumber}`;
   let conversation = activeConversations.get(conversationKey);
+  
+  // Normalizar mensagem - remover acentos, converter para minúsculo, remover espaços extras
+  const normalizedMessage = messageText
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // Remove acentos
   
   // Se não existe conversa, criar nova
   if (!conversation) {
@@ -119,9 +145,28 @@ async function processIncomingMessage(userId, phoneNumber, messageText, client) 
       selectedDate: null,
       selectedTime: null,
       selectedProfessional: null,
-      startedAt: new Date()
+      startedAt: new Date(),
+      lastInteraction: new Date()
     };
     activeConversations.set(conversationKey, conversation);
+    console.log(`[${userId}] Nova conversa iniciada com ${phoneNumber}`);
+  }
+  
+  // Atualizar última interação
+  conversation.lastInteraction = new Date();
+  
+  // Detectar palavras-chave para resetar conversa
+  const resetKeywords = ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'inicio', 'menu', 'start'];
+  const isGreeting = resetKeywords.some(keyword => normalizedMessage.includes(keyword));
+  
+  // Se é uma saudação e não está no estado inicial, resetar conversa
+  if (isGreeting && conversation.state !== CONVERSATION_STATES.WAITING_SERVICE) {
+    console.log(`[${userId}] Resetando conversa para ${phoneNumber} - saudação detectada`);
+    conversation.state = CONVERSATION_STATES.WAITING_SERVICE;
+    conversation.selectedService = null;
+    conversation.selectedDate = null;
+    conversation.selectedTime = null;
+    conversation.selectedProfessional = null;
   }
   
   // Processar mensagem baseado no estado atual
@@ -130,27 +175,28 @@ async function processIncomingMessage(userId, phoneNumber, messageText, client) 
   try {
     switch (conversation.state) {
       case CONVERSATION_STATES.WAITING_SERVICE:
-        responseMessage = await handleServiceSelection(userId, conversation, messageText);
+        responseMessage = await handleServiceSelection(userId, conversation, messageText, normalizedMessage);
         break;
         
       case CONVERSATION_STATES.WAITING_DATE:
-        responseMessage = await handleDateSelection(userId, conversation, messageText);
+        responseMessage = await handleDateSelection(userId, conversation, messageText, normalizedMessage);
         break;
         
       case CONVERSATION_STATES.WAITING_TIME:
-        responseMessage = await handleTimeSelection(userId, conversation, messageText);
+        responseMessage = await handleTimeSelection(userId, conversation, messageText, normalizedMessage);
         break;
         
       case CONVERSATION_STATES.WAITING_PROFESSIONAL:
-        responseMessage = await handleProfessionalSelection(userId, conversation, messageText);
+        responseMessage = await handleProfessionalSelection(userId, conversation, messageText, normalizedMessage);
         break;
         
       case CONVERSATION_STATES.WAITING_CONFIRMATION:
-        responseMessage = await handleConfirmation(userId, conversation, messageText);
+        responseMessage = await handleConfirmation(userId, conversation, messageText, normalizedMessage);
         break;
         
       default:
-        responseMessage = await handleServiceSelection(userId, conversation, messageText);
+        console.log(`[${userId}] Estado desconhecido: ${conversation.state}, resetando...`);
+        responseMessage = await handleServiceSelection(userId, conversation, messageText, normalizedMessage);
         conversation.state = CONVERSATION_STATES.WAITING_SERVICE;
     }
     
@@ -160,163 +206,218 @@ async function processIncomingMessage(userId, phoneNumber, messageText, client) 
     // Enviar resposta
     if (responseMessage) {
       await client.sendMessage(phoneNumber, responseMessage);
-      console.log(`[${userId}] Resposta enviada para ${phoneNumber}`);
+      console.log(`[${userId}] Resposta enviada para ${phoneNumber}: "${responseMessage.substring(0, 50)}..."`);
     }
     
   } catch (error) {
-    console.error(`Erro ao processar mensagem de ${phoneNumber}:`, error);
-    await client.sendMessage(phoneNumber, "Desculpe, ocorreu um erro. Tente novamente ou entre em contato conosco.");
+    console.error(`[${userId}] Erro ao processar mensagem de ${phoneNumber}:`, error);
+    await client.sendMessage(phoneNumber, "Ops! Ocorreu um erro temporário. Digite *menu* para recomeçar ou entre em contato conosco. 😊");
   }
 }
 
-// NOVO: Funções para cada etapa da conversa
-async function handleServiceSelection(userId, conversation, messageText) {
+// Funções melhoradas para cada etapa da conversa
+async function handleServiceSelection(userId, conversation, messageText, normalizedMessage) {
   const services = MOCK_SERVICES[userId] || [];
   
-  // Se é uma nova conversa, mostrar welcome + serviços
-  if (messageText.toLowerCase().includes('oi') || messageText.toLowerCase().includes('olá') || 
-      messageText.toLowerCase().includes('bom dia') || messageText.toLowerCase().includes('boa tarde') ||
-      conversation.state === CONVERSATION_STATES.WAITING_SERVICE) {
-    
-    let message = DEFAULT_BOT_CONFIG.welcomeMessage + "\n\n";
-    message += DEFAULT_BOT_CONFIG.servicesMessage + "\n\n";
+  console.log(`[${userId}] Processando seleção de serviço: "${messageText}"`);
+  
+  // Palavras-chave para mostrar menu inicial
+  const menuKeywords = ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'servicos', 'opcoes'];
+  const showMenu = menuKeywords.some(keyword => normalizedMessage.includes(keyword));
+  
+  if (showMenu || conversation.selectedService === null) {
+    let message = "🤖 *Olá! Bem-vindo(a)!*\n\n";
+    message += "Sou seu assistente virtual de agendamentos! 😊\n\n";
+    message += "*📋 Nossos Serviços:*\n\n";
     
     services.forEach((service, index) => {
-      message += `${index + 1} - ${service.name} (${service.duration}min - R$ ${service.price})\n`;
+      message += `*${index + 1}* - ${service.name}\n`;
+      message += `   ⏱️ ${service.duration} min | 💰 R$ ${service.price}\n\n`;
     });
     
-    message += "\nDigite o número do serviço desejado:";
+    message += "📝 *Digite o número do serviço desejado*\n";
+    message += "ou digite *menu* para ver novamente";
     
     return message;
   }
   
-  // Processar seleção de serviço
-  const serviceIndex = parseInt(messageText) - 1;
+  // Tentar interpretar número da opção
+  const serviceNumber = extractNumber(messageText);
+  console.log(`[${userId}] Número extraído: ${serviceNumber}`);
   
-  if (serviceIndex >= 0 && serviceIndex < services.length) {
-    conversation.selectedService = services[serviceIndex];
+  if (serviceNumber >= 1 && serviceNumber <= services.length) {
+    const selectedService = services[serviceNumber - 1];
+    conversation.selectedService = selectedService;
     conversation.state = CONVERSATION_STATES.WAITING_DATE;
     
-    return await handleDateSelection(userId, conversation, 'show_dates');
+    console.log(`[${userId}] Serviço selecionado: ${selectedService.name}`);
+    
+    let message = `✅ *Serviço selecionado:*\n`;
+    message += `*${selectedService.name}*\n`;
+    message += `⏱️ Duração: ${selectedService.duration} min\n`;
+    message += `💰 Valor: R$ ${selectedService.price}\n\n`;
+    
+    return message + await handleDateSelection(userId, conversation, 'show_dates', 'show_dates');
   } else {
-    return DEFAULT_BOT_CONFIG.invalidMessage + "\n\n" + 
-           "Serviços disponíveis:\n" +
-           services.map((service, index) => `${index + 1} - ${service.name}`).join('\n');
+    let message = "❌ *Opção inválida!*\n\n";
+    message += "Por favor, digite apenas o *número* do serviço:\n\n";
+    services.forEach((service, index) => {
+      message += `*${index + 1}* - ${service.name}\n`;
+    });
+    message += "\n💡 Exemplo: Digite *1* para o primeiro serviço";
+    
+    return message;
   }
 }
 
-async function handleDateSelection(userId, conversation, messageText) {
-  if (messageText === 'show_dates') {
-    // Mostrar opções de data
+async function handleDateSelection(userId, conversation, messageText, normalizedMessage) {
+  console.log(`[${userId}] Processando seleção de data: "${messageText}"`);
+  
+  if (messageText === 'show_dates' || normalizedMessage.includes('data')) {
     const today = new Date();
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const dayAfterTomorrow = new Date(today);
     dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
     
-    let message = DEFAULT_BOT_CONFIG.dateMessage + "\n\n";
-    message += `1 - Hoje (${formatDate(today)})\n`;
-    message += `2 - Amanhã (${formatDate(tomorrow)})\n`;
-    message += `3 - ${formatDate(dayAfterTomorrow)}\n`;
-    message += `4 - Outra data\n`;
-    message += `0 - Voltar aos serviços\n`;
+    let message = "📅 *Escolha uma data:*\n\n";
+    message += `*1* - Hoje (${formatDate(today)})\n`;
+    message += `*2* - Amanhã (${formatDate(tomorrow)})\n`;
+    message += `*3* - ${formatDate(dayAfterTomorrow)}\n`;
+    message += `*4* - Outra data\n\n`;
+    message += `*0* - ⬅️ Voltar aos serviços\n\n`;
+    message += "📝 *Digite o número da data desejada*";
     
     return message;
   }
   
-  const option = parseInt(messageText);
+  const option = extractNumber(messageText);
+  console.log(`[${userId}] Opção de data selecionada: ${option}`);
+  
+  // Detectar palavra "voltar"
+  if (option === 0 || normalizedMessage.includes('voltar')) {
+    conversation.state = CONVERSATION_STATES.WAITING_SERVICE;
+    conversation.selectedService = null;
+    return await handleServiceSelection(userId, conversation, 'menu', 'menu');
+  }
+  
   let selectedDate;
+  let dateMessage = '';
   
   switch (option) {
-    case 0:
-      conversation.state = CONVERSATION_STATES.WAITING_SERVICE;
-      return await handleServiceSelection(userId, conversation, 'show_services');
-      
     case 1:
       selectedDate = new Date();
+      dateMessage = 'hoje';
       break;
       
     case 2:
       selectedDate = new Date();
       selectedDate.setDate(selectedDate.getDate() + 1);
+      dateMessage = 'amanhã';
       break;
       
     case 3:
       selectedDate = new Date();
       selectedDate.setDate(selectedDate.getDate() + 2);
+      dateMessage = formatDate(selectedDate);
       break;
       
     case 4:
-      return "Por favor, digite a data desejada no formato DD/MM/AAAA:";
+      return "📅 *Digite a data desejada*\n\nFormato: DD/MM/AAAA\n💡 Exemplo: 15/06/2025\n\nOu digite *0* para voltar";
       
     default:
-      return DEFAULT_BOT_CONFIG.invalidMessage;
+      // Tentar interpretar como data DD/MM/AAAA
+      const dateMatch = messageText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dateMatch) {
+        const [, day, month, year] = dateMatch;
+        selectedDate = new Date(year, month - 1, day);
+        if (selectedDate > new Date()) {
+          dateMessage = formatDate(selectedDate);
+          break;
+        }
+      }
+      
+      return "❌ *Data inválida!*\n\nEscolha uma das opções:\n*1* - Hoje\n*2* - Amanhã\n*3* - Outro dia\n*4* - Data específica\n\n*0* - Voltar";
   }
   
   conversation.selectedDate = selectedDate;
   conversation.state = CONVERSATION_STATES.WAITING_TIME;
   
-  return await handleTimeSelection(userId, conversation, 'show_times');
+  let message = `✅ *Data selecionada:*\n${dateMessage}\n\n`;
+  return message + await handleTimeSelection(userId, conversation, 'show_times', 'show_times');
 }
 
-async function handleTimeSelection(userId, conversation, messageText) {
-  if (messageText === 'show_times') {
-    // Aqui consultaríamos a agenda real, por enquanto horários mock
+async function handleTimeSelection(userId, conversation, messageText, normalizedMessage) {
+  console.log(`[${userId}] Processando seleção de horário: "${messageText}"`);
+  
+  if (messageText === 'show_times' || normalizedMessage.includes('horario')) {
+    // TODO: Aqui consultaremos horários reais da agenda
+    // Por enquanto, horários mockados
     const availableTimes = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'];
     
-    let message = DEFAULT_BOT_CONFIG.timeMessage + "\n\n";
+    let message = "🕐 *Horários disponíveis:*\n\n";
     availableTimes.forEach((time, index) => {
-      message += `${index + 1} - ${time}\n`;
+      message += `*${index + 1}* - ${time}\n`;
     });
-    message += `0 - Voltar às datas\n`;
+    message += `\n*0* - ⬅️ Voltar às datas\n\n`;
+    message += "📝 *Digite o número do horário*";
     
     return message;
   }
   
   const availableTimes = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'];
-  const option = parseInt(messageText);
+  const option = extractNumber(messageText);
+  console.log(`[${userId}] Opção de horário selecionada: ${option}`);
   
-  if (option === 0) {
+  if (option === 0 || normalizedMessage.includes('voltar')) {
     conversation.state = CONVERSATION_STATES.WAITING_DATE;
-    return await handleDateSelection(userId, conversation, 'show_dates');
+    return await handleDateSelection(userId, conversation, 'show_dates', 'show_dates');
   }
   
   const timeIndex = option - 1;
   if (timeIndex >= 0 && timeIndex < availableTimes.length) {
     conversation.selectedTime = availableTimes[timeIndex];
     
+    console.log(`[${userId}] Horário selecionado: ${conversation.selectedTime}`);
+    
     // Verificar se tem profissionais cadastrados
     const professionals = MOCK_PROFESSIONALS[userId] || [];
     if (professionals.length > 0) {
       conversation.state = CONVERSATION_STATES.WAITING_PROFESSIONAL;
-      return await handleProfessionalSelection(userId, conversation, 'show_professionals');
+      let message = `✅ *Horário selecionado:*\n${conversation.selectedTime}\n\n`;
+      return message + await handleProfessionalSelection(userId, conversation, 'show_professionals', 'show_professionals');
     } else {
       conversation.state = CONVERSATION_STATES.WAITING_CONFIRMATION;
-      return await handleConfirmation(userId, conversation, 'show_confirmation');
+      let message = `✅ *Horário selecionado:*\n${conversation.selectedTime}\n\n`;
+      return message + await handleConfirmation(userId, conversation, 'show_confirmation', 'show_confirmation');
     }
   } else {
-    return DEFAULT_BOT_CONFIG.invalidMessage;
+    return "❌ *Horário inválido!*\n\nDigite o *número* correspondente ao horário desejado.\n\n*0* para voltar";
   }
 }
 
-async function handleProfessionalSelection(userId, conversation, messageText) {
+async function handleProfessionalSelection(userId, conversation, messageText, normalizedMessage) {
+  console.log(`[${userId}] Processando seleção de profissional: "${messageText}"`);
+  
   const professionals = MOCK_PROFESSIONALS[userId] || [];
   
-  if (messageText === 'show_professionals') {
-    let message = DEFAULT_BOT_CONFIG.professionalMessage + "\n\n";
+  if (messageText === 'show_professionals' || normalizedMessage.includes('profissional')) {
+    let message = "👨‍💼 *Escolha um profissional:*\n\n";
     professionals.forEach((professional, index) => {
-      message += `${index + 1} - ${professional.name}\n`;
+      message += `*${index + 1}* - ${professional.name}\n`;
     });
-    message += `0 - Voltar aos horários\n`;
+    message += `\n*0* - ⬅️ Voltar aos horários\n\n`;
+    message += "📝 *Digite o número do profissional*";
     
     return message;
   }
   
-  const option = parseInt(messageText);
+  const option = extractNumber(messageText);
+  console.log(`[${userId}] Opção de profissional selecionada: ${option}`);
   
-  if (option === 0) {
+  if (option === 0 || normalizedMessage.includes('voltar')) {
     conversation.state = CONVERSATION_STATES.WAITING_TIME;
-    return await handleTimeSelection(userId, conversation, 'show_times');
+    return await handleTimeSelection(userId, conversation, 'show_times', 'show_times');
   }
   
   const professionalIndex = option - 1;
@@ -324,69 +425,78 @@ async function handleProfessionalSelection(userId, conversation, messageText) {
     conversation.selectedProfessional = professionals[professionalIndex];
     conversation.state = CONVERSATION_STATES.WAITING_CONFIRMATION;
     
-    return await handleConfirmation(userId, conversation, 'show_confirmation');
+    console.log(`[${userId}] Profissional selecionado: ${conversation.selectedProfessional.name}`);
+    
+    let message = `✅ *Profissional selecionado:*\n${conversation.selectedProfessional.name}\n\n`;
+    return message + await handleConfirmation(userId, conversation, 'show_confirmation', 'show_confirmation');
   } else {
-    return DEFAULT_BOT_CONFIG.invalidMessage;
+    return "❌ *Profissional inválido!*\n\nDigite o *número* correspondiente ao profissional.\n\n*0* para voltar";
   }
 }
 
-async function handleConfirmation(userId, conversation, messageText) {
-  if (messageText === 'show_confirmation') {
+async function handleConfirmation(userId, conversation, messageText, normalizedMessage) {
+  console.log(`[${userId}] Processando confirmação: "${messageText}"`);
+  
+  if (messageText === 'show_confirmation' || normalizedMessage.includes('confirma')) {
     const professional = conversation.selectedProfessional;
     
     let message = "📋 *RESUMO DO AGENDAMENTO*\n\n";
-    message += `🔹 Serviço: ${conversation.selectedService.name}\n`;
-    message += `🔹 Data: ${formatDate(conversation.selectedDate)}\n`;
-    message += `🔹 Horário: ${conversation.selectedTime}\n`;
+    message += `🔸 *Serviço:* ${conversation.selectedService.name}\n`;
+    message += `🔸 *Data:* ${formatDate(conversation.selectedDate)}\n`;
+    message += `🔸 *Horário:* ${conversation.selectedTime}\n`;
     if (professional) {
-      message += `🔹 Profissional: ${professional.name}\n`;
+      message += `🔸 *Profissional:* ${professional.name}\n`;
     }
-    message += `🔹 Duração: ${conversation.selectedService.duration} minutos\n`;
-    message += `🔹 Valor: R$ ${conversation.selectedService.price}\n\n`;
-    message += "1 - Confirmar agendamento\n";
-    message += "0 - Voltar e alterar\n";
+    message += `🔸 *Duração:* ${conversation.selectedService.duration} min\n`;
+    message += `🔸 *Valor:* R$ ${conversation.selectedService.price}\n\n`;
+    message += "✅ *1* - Confirmar agendamento\n";
+    message += "❌ *0* - Cancelar e voltar\n\n";
+    message += "📝 *Digite sua opção*";
     
     return message;
   }
   
-  const option = parseInt(messageText);
+  const option = extractNumber(messageText);
+  console.log(`[${userId}] Opção de confirmação: ${option}`);
   
-  if (option === 1) {
-    // Confirmar agendamento - aqui criaria o agendamento no sistema
+  // Detectar confirmação por palavras
+  const confirmWords = ['sim', 'confirmar', 'confirmo', 'ok', 'certo', 'perfeito'];
+  const cancelWords = ['nao', 'cancelar', 'voltar', 'não'];
+  
+  const isConfirm = option === 1 || confirmWords.some(word => normalizedMessage.includes(word));
+  const isCancel = option === 0 || cancelWords.some(word => normalizedMessage.includes(word));
+  
+  if (isConfirm) {
+    // TODO: Aqui criaremos o agendamento no Supabase
     conversation.state = CONVERSATION_STATES.COMPLETED;
     
     // Remover conversa da memória após completar
     const conversationKey = `${userId}:${conversation.phoneNumber}`;
     activeConversations.delete(conversationKey);
     
-    return "✅ *AGENDAMENTO CONFIRMADO!*\n\n" +
-           "Seu agendamento foi registrado com sucesso.\n" +
-           "Você receberá uma confirmação em breve.\n\n" +
-           "Obrigado pela preferência!";
-  } else if (option === 0) {
-    // Voltar - resetar para escolha de serviço
+    console.log(`[${userId}] Agendamento confirmado para ${conversation.phoneNumber}`);
+    
+    return "🎉 *AGENDAMENTO CONFIRMADO!*\n\n" +
+           "✅ Seu agendamento foi registrado com sucesso!\n\n" +
+           "📲 Você receberá uma confirmação em breve.\n" +
+           "⏰ Lembre-se do horário marcado.\n\n" +
+           "🙏 Obrigado pela preferência!\n\n" +
+           "💬 Digite *menu* para novo agendamento";
+  } else if (isCancel) {
+    // Voltar ao menu inicial
     conversation.state = CONVERSATION_STATES.WAITING_SERVICE;
     conversation.selectedService = null;
     conversation.selectedDate = null;
     conversation.selectedTime = null;
     conversation.selectedProfessional = null;
     
-    return await handleServiceSelection(userId, conversation, 'show_services');
+    return "❌ *Agendamento cancelado*\n\n" + await handleServiceSelection(userId, conversation, 'menu', 'menu');
   } else {
-    return DEFAULT_BOT_CONFIG.invalidMessage;
+    return "❓ *Não entendi sua resposta*\n\n" +
+           "Digite:\n" +
+           "✅ *1* ou *sim* para CONFIRMAR\n" +
+           "❌ *0* ou *não* para CANCELAR";
   }
-}
-
-// Função utilitária para formatar data
-function formatDate(date) {
-  const days = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-  
-  const dayName = days[date.getDay()];
-  const day = date.getDate().toString().padStart(2, '0');
-  const month = months[date.getMonth()];
-  
-  return `${dayName} ${day}/${month}`;
 }
 
 // Criar cliente WhatsApp para um usuário específico
@@ -442,7 +552,7 @@ function createWhatsAppClient(userId) {
     console.log(`WhatsApp conectado para usuário: ${userId}`);
   });
 
-  // NOVO: Event listener para mensagens recebidas
+  // Event listener para mensagens recebidas
   client.on('message', async (message) => {
     // Ignorar mensagens enviadas pelo próprio bot
     if (message.fromMe) return;
@@ -496,7 +606,7 @@ function validateUserId(req, res, next) {
   next();
 }
 
-// NOVO: API para consultar conversas ativas de um usuário
+// API para consultar conversas ativas de um usuário
 app.get('/conversations/:userId', validateUserId, (req, res) => {
   const userConversations = [];
   
@@ -517,7 +627,7 @@ app.get('/conversations/:userId', validateUserId, (req, res) => {
   res.json({ conversations: userConversations });
 });
 
-// NOVO: API para limpar conversa específica
+// API para limpar conversa específica
 app.delete('/conversation/:userId/:phoneNumber', validateUserId, (req, res) => {
   const { phoneNumber } = req.params;
   const conversationKey = `${req.userId}:${phoneNumber}`;
@@ -846,25 +956,44 @@ app.get('/admin/users', (req, res) => {
   res.json({ users, totalConversations: activeConversations.size });
 });
 
+// Cleanup de conversas antigas (rodar a cada hora)
+setInterval(() => {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  
+  for (const [key, conversation] of activeConversations.entries()) {
+    if (conversation.lastInteraction < oneHourAgo) {
+      console.log(`Removendo conversa inativa: ${key}`);
+      activeConversations.delete(key);
+    }
+  }
+}, 60 * 60 * 1000); // Cada hora
+
 // Criar diretório de sessões se não existir
 const sessionsDir = './sessions';
 if (!fs.existsSync(sessionsDir)) {
   fs.mkdirSync(sessionsDir, { recursive: true });
 }
 
-console.log('=== SERVIDOR WHATSAPP BOT MULTI-USUÁRIO ===');
+console.log('=== SERVIDOR WHATSAPP BOT MULTI-USUÁRIO - VERSÃO MELHORADA ===');
 console.log('Funcionalidades:');
 console.log('✅ Múltiplos usuários isolados');
-console.log('✅ Bot conversacional automático');
-console.log('✅ Sistema de agendamento inteligente');
-console.log('✅ Respostas automáticas personalizadas');
+console.log('✅ Bot conversacional inteligente com interpretação melhorada');
+console.log('✅ Sistema de agendamento automático');
+console.log('✅ Respostas formatadas com emojis');
+console.log('✅ Navegação natural (números + palavras)');
+console.log('✅ Cleanup automático de conversas');
 console.log('');
-console.log('Novos Endpoints:');
+console.log('Melhorias do Bot:');
+console.log('🤖 Interpretação inteligente de mensagens');
+console.log('🔄 Reset automático com saudações');
+console.log('📱 Formatação WhatsApp com negrito e emojis');
+console.log('🔍 Extração automática de números');
+console.log('⏰ Timeout automático de conversas inativas');
+console.log('');
+console.log('Endpoints:');
 console.log('- GET /conversations/:userId - Listar conversas ativas');
 console.log('- DELETE /conversation/:userId/:phoneNumber - Remover conversa');
 console.log('- GET /admin/users - Visão geral de todos usuários');
-console.log('');
-console.log('Endpoints Existentes:');
 console.log('- POST /initialize/:userId - Inicializar cliente');
 console.log('- GET /qr/:userId - Obter QR Code');
 console.log('- GET /qr-page/:userId - Página do QR Code');
@@ -874,5 +1003,6 @@ console.log('- POST /disconnect/:userId - Desconectar cliente');
 
 app.listen(port, () => {
   console.log(`🚀 Servidor rodando na porta ${port}`);
-  console.log(`🤖 Sistema de bot conversacional ativo!`);
+  console.log(`🤖 Sistema de bot conversacional MELHORADO ativo!`);
+  console.log(`📱 Pronto para responder mensagens com interpretação inteligente!`);
 });
