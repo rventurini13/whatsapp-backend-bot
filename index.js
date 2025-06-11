@@ -27,3 +27,6 @@ const client = new Client({
     '--disable-gpu'
   ]
 }
+app.listen(port, () => {
+  console.log(`🚀 Servidor rodando em http://localhost:${port}`);
+});
