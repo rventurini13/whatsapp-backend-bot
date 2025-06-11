@@ -1,11 +1,10 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const puppeteer = require('puppeteer');
 const qrcode = require('qrcode');
 const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 
 app.use(cors());
 app.use(express.json());
@@ -13,9 +12,32 @@ app.use(express.json());
 let qrCodeBase64 = null;
 let isReady = false;
 
+// Função para encontrar o Chromium no Nixpacks
+function findChromiumPath() {
+  const fs = require('fs');
+  const paths = [
+    process.env.CHROME_PATH,
+    process.env.CHROMIUM_PATH,
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome'
+  ];
+  
+  for (const path of paths) {
+    if (path && fs.existsSync(path)) {
+      console.log(`Executável encontrado em: ${path}`);
+      return path;
+    }
+  }
+  
+  console.log('Deixando Puppeteer encontrar automaticamente');
+  return undefined;
+}
+
 const client = new Client({
   puppeteer: {
-    executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome-stable',
+    executablePath: findChromiumPath(),
     headless: true,
     args: [
       '--no-sandbox',
@@ -25,7 +47,9 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--single-process',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor'
     ]
   },
   authStrategy: new LocalAuth({ dataPath: './sessions' })
@@ -39,9 +63,23 @@ client.on('qr', async (qr) => {
 
 client.on('ready', () => {
   isReady = true;
-  console.log('WhatsApp conectado');
+  console.log('WhatsApp conectado com sucesso!');
 });
 
+client.on('auth_failure', (msg) => {
+  console.error('Falha na autenticação:', msg);
+});
+
+client.on('disconnected', (reason) => {
+  console.log('Cliente desconectado:', reason);
+  isReady = false;
+});
+
+client.on('error', (error) => {
+  console.error('Erro no cliente WhatsApp:', error);
+});
+
+console.log('Inicializando cliente WhatsApp...');
 client.initialize();
 
 app.get('/qr', (req, res) => {
@@ -57,12 +95,12 @@ app.post('/send-message', async (req, res) => {
   const { to, message } = req.body;
   if (!isReady) return res.status(400).json({ error: 'não conectado' });
   if (!to || !message) return res.status(400).json({ error: '"to" e "message" obrigatórios' });
-
+  
   try {
     await client.sendMessage(to, message);
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Erro ao enviar mensagem:', err);
     res.status(500).json({ error: 'falha ao enviar mensagem' });
   }
 });
