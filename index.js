@@ -1,6 +1,6 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const puppeteer = require('puppeteer');      // << add
+const puppeteer = require('puppeteer');
 const qrcode = require('qrcode');
 const cors = require('cors');
 
@@ -14,14 +14,28 @@ let qrCodeBase64 = null;
 let isReady = false;
 
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './sessions' }),
-  puppeteer      // << passa o pacote puppeteer completo
+  puppeteer,              // usa o Puppeteer completo
+  puppeteerOptions: {     // opções de launch
+    executablePath: process.env.CHROME_PATH || undefined, // Render já fornece Chromium
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ]
+  },
+  authStrategy: new LocalAuth({ dataPath: './sessions' })
 });
 
 client.on('qr', async (qr) => {
   qrCodeBase64 = await qrcode.toDataURL(qr);
   isReady = false;
-  console.log('QR Code gerado. Escaneie para conectar');
+  console.log('QR gerado – escaneie para conectar');
 });
 
 client.on('ready', () => {
@@ -33,7 +47,7 @@ client.initialize();
 
 app.get('/qr', (req, res) => {
   if (qrCodeBase64) return res.json({ qr: qrCodeBase64 });
-  res.status(404).json({ error: 'QR Code indisponível' });
+  res.status(404).json({ error: 'QR não disponível' });
 });
 
 app.get('/status', (req, res) => {
@@ -42,18 +56,18 @@ app.get('/status', (req, res) => {
 
 app.post('/send-message', async (req, res) => {
   const { to, message } = req.body;
-  if (!isReady) return res.status(400).json({ error: 'Não conectado' });
-  if (!to || !message) return res.status(400).json({ error: '"to" e "message" são obrigatórios' });
+  if (!isReady) return res.status(400).json({ error: 'não conectado' });
+  if (!to || !message) return res.status(400).json({ error: '"to" e "message" obrigatórios' });
 
   try {
     await client.sendMessage(to, message);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Falha ao enviar' });
+    res.status(500).json({ error: 'falha ao enviar mensagem' });
   }
 });
 
 app.listen(port, () => {
-  console.log(`Servidor rodando em porta ${port}`);
+  console.log(`Servidor rodando na porta ${port}`);
 });
