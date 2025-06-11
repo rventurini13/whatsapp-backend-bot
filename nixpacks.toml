@@ -1,8 +1,29 @@
 [phases.setup]
-nixPkgs = ["chromium"]
+nixpkgs = [
+  "nodejs_18",
+  "chromium",
+  "nss",
+  "atk",
+  "cups",
+  "libxss",
+  "libappindicator-gtk3",
+  "libdrm",
+  "pango",
+  "gtk3",
+  "glib",
+  "mesa",
+  "libxcomposite",
+  "libxrandr",
+  "libxcb",
+  "libxdamage",
+  "libxfixes",
+  "libxext",
+  "libx11",
+  "alsa-lib"
+]
 
-[phases.install]
+[phases.build]
 cmds = ["npm install"]
 
 [start]
-cmd = "npm start"
+cmd = "node index.js"
