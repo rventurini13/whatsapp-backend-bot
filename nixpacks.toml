@@ -25,5 +25,8 @@ nixpkgs = [
 [phases.build]
 cmds = ["npm install"]
 
+[variables]
+CHROMIUM_PATH = "/nix/store/*/bin/chromium"
+
 [start]
 cmd = "node index.js"
