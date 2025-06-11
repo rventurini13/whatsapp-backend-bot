@@ -3,8 +3,6 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const cors = require('cors');
 
-process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
-
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -17,6 +15,7 @@ let isReady = false;
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sessions' }),
   puppeteer: {
+    executablePath: '/usr/bin/chromium',
     headless: true,
     args: [
       '--no-sandbox',
@@ -34,12 +33,12 @@ const client = new Client({
 client.on('qr', async (qr) => {
   qrCodeBase64 = await qrcode.toDataURL(qr);
   isReady = false;
-  console.log('Escaneie o QR Code para conectar ao WhatsApp');
+  console.log('QR Code gerado. Escaneie para conectar ao WhatsApp');
 });
 
 client.on('ready', () => {
   isReady = true;
-  console.log('WhatsApp conectado!');
+  console.log('WhatsApp conectado com sucesso');
 });
 
 client.initialize();
@@ -48,7 +47,7 @@ app.get('/qr', (req, res) => {
   if (qrCodeBase64) {
     res.json({ qr: qrCodeBase64 });
   } else {
-    res.status(404).json({ error: 'QR Code ainda não gerado' });
+    res.status(404).json({ error: 'QR Code ainda não disponível' });
   }
 });
 
@@ -60,7 +59,7 @@ app.post('/send-message', async (req, res) => {
   const { to, message } = req.body;
 
   if (!isReady) {
-    return res.status(400).json({ error: 'WhatsApp ainda não conectado.' });
+    return res.status(400).json({ error: 'WhatsApp não está conectado.' });
   }
 
   if (!to || !message) {
