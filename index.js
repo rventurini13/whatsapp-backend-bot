@@ -113,6 +113,101 @@ app.get('/qr', (req, res) => {
   res.status(404).json({ error: 'QR não disponível' });
 });
 
+app.get('/qr-page', (req, res) => {
+  if (!qrCodeBase64) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>WhatsApp QR Code</title>
+        <meta charset="UTF-8">
+        <style>
+          body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f0f0; }
+          .container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+          h1 { color: #25D366; }
+          button { background: #25D366; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+          button:hover { background: #1ea952; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Aguardando QR Code...</h1>
+          <p>O QR Code ainda não foi gerado. Aguarde alguns segundos e atualize a página.</p>
+          <button onclick="location.reload()">Atualizar Página</button>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+  
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>WhatsApp QR Code</title>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f0f0; }
+        .container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+        .qr-code { border: 3px solid #25D366; border-radius: 10px; padding: 20px; background: white; margin: 20px 0; }
+        h1 { color: #25D366; margin-bottom: 20px; }
+        .instructions { background: #e8f5e8; padding: 20px; border-radius: 8px; margin-top: 20px; }
+        .status { margin-top: 20px; }
+        button { background: #25D366; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px; }
+        button:hover { background: #1ea952; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>WhatsApp QR Code</h1>
+        <p>Escaneie o QR Code abaixo com seu WhatsApp:</p>
+        
+        <div class="qr-code">
+          <img src="${qrCodeBase64}" alt="QR Code WhatsApp" style="max-width: 100%; height: auto;"/>
+        </div>
+        
+        <div class="instructions">
+          <h3>Como conectar:</h3>
+          <p>1. Abra o WhatsApp no seu celular</p>
+          <p>2. Vá em <strong>Menu</strong> → <strong>Dispositivos conectados</strong></p>
+          <p>3. Toque em <strong>Conectar dispositivo</strong></p>
+          <p>4. Escaneie o QR Code acima</p>
+        </div>
+        
+        <div class="status">
+          <button onclick="checkStatus()">Verificar Status</button>
+          <button onclick="location.reload()">Novo QR Code</button>
+          <div id="statusResult" style="margin-top: 15px;"></div>
+        </div>
+      </div>
+      
+      <script>
+        async function checkStatus() {
+          try {
+            const response = await fetch('/status');
+            const data = await response.json();
+            const statusDiv = document.getElementById('statusResult');
+            
+            if (data.connected) {
+              statusDiv.innerHTML = '<p style="color: #25D366; font-weight: bold;">WhatsApp Conectado!</p>';
+            } else {
+              statusDiv.innerHTML = '<p style="color: #ff6b6b; font-weight: bold;">Ainda não conectado</p>';
+            }
+          } catch (error) {
+            document.getElementById('statusResult').innerHTML = '<p style="color: #ff6b6b;">Erro ao verificar status</p>';
+          }
+        }
+        
+        // Verificar status automaticamente a cada 5 segundos
+        setInterval(checkStatus, 5000);
+        checkStatus(); // Verificar imediatamente
+      </script>
+    </body>
+    </html>
+  `;
+  res.send(html);
+});
+
 app.get('/status', (req, res) => {
   res.json({ connected: isReady });
 });
