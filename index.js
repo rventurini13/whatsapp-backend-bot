@@ -14,9 +14,8 @@ let qrCodeBase64 = null;
 let isReady = false;
 
 const client = new Client({
-  puppeteer,              // usa o Puppeteer completo
-  puppeteerOptions: {     // opções de launch
-    executablePath: process.env.CHROME_PATH || undefined, // Render já fornece Chromium
+  puppeteer: {
+    executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome-stable',
     headless: true,
     args: [
       '--no-sandbox',
