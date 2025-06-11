@@ -1,16 +1,16 @@
+# nixpacks.toml – instala Chromium completo + libs GTK/GLib
 [phases.setup]
 nixPkgs = [
-  "nodejs_18",
-  "glib",
+  # Chromium com todas as dependências internas
+  "chromium",
+
+  # libs extras que o Puppeteer costuma exigir
   "nss_latest",
   "libxkbcommon",
-  "libdrm",
-  "mesa",
-  "xorg.libxcb",
-  "xorg.libX11",
   "gtk3",
-  "pango",
-  "atk",
-  "cairo",
   "alsa-lib"
 ]
+
+# Diz explicitamente ao Nixpacks que queremos Node 18
+[variables]
+NODE_VERSION = "18"
