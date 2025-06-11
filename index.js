@@ -1,5 +1,6 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const puppeteer = require('puppeteer');      // << add
 const qrcode = require('qrcode');
 const cors = require('cors');
 
@@ -14,41 +15,25 @@ let isReady = false;
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sessions' }),
-  puppeteer: {
-    executablePath: '/usr/bin/chromium',
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
-    ]
-  }
+  puppeteer      // << passa o pacote puppeteer completo
 });
 
 client.on('qr', async (qr) => {
   qrCodeBase64 = await qrcode.toDataURL(qr);
   isReady = false;
-  console.log('QR Code gerado. Escaneie para conectar ao WhatsApp');
+  console.log('QR Code gerado. Escaneie para conectar');
 });
 
 client.on('ready', () => {
   isReady = true;
-  console.log('WhatsApp conectado com sucesso');
+  console.log('WhatsApp conectado');
 });
 
 client.initialize();
 
 app.get('/qr', (req, res) => {
-  if (qrCodeBase64) {
-    res.json({ qr: qrCodeBase64 });
-  } else {
-    res.status(404).json({ error: 'QR Code ainda não disponível' });
-  }
+  if (qrCodeBase64) return res.json({ qr: qrCodeBase64 });
+  res.status(404).json({ error: 'QR Code indisponível' });
 });
 
 app.get('/status', (req, res) => {
@@ -57,24 +42,18 @@ app.get('/status', (req, res) => {
 
 app.post('/send-message', async (req, res) => {
   const { to, message } = req.body;
-
-  if (!isReady) {
-    return res.status(400).json({ error: 'WhatsApp não está conectado.' });
-  }
-
-  if (!to || !message) {
-    return res.status(400).json({ error: 'Parâmetros "to" e "message" são obrigatórios.' });
-  }
+  if (!isReady) return res.status(400).json({ error: 'Não conectado' });
+  if (!to || !message) return res.status(400).json({ error: '"to" e "message" são obrigatórios' });
 
   try {
     await client.sendMessage(to, message);
     res.json({ success: true });
-  } catch (error) {
-    console.error('Erro ao enviar mensagem:', error);
-    res.status(500).json({ error: 'Erro ao enviar mensagem.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha ao enviar' });
   }
 });
 
 app.listen(port, () => {
-  console.log(`Servidor rodando em http://localhost:${port}`);
+  console.log(`Servidor rodando em porta ${port}`);
 });
