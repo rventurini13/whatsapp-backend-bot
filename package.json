@@ -11,6 +11,6 @@
     "whatsapp-web.js": "^1.21.0",
     "qrcode": "^1.5.1",
     "cors": "^2.8.5",
-    "puppeteer": "^19.11.1"      //<— aqui
+    "puppeteer": "^19.11.1"
   }
 }
