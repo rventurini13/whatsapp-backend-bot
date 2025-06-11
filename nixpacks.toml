@@ -1,0 +1,15 @@
+[phases.setup]
+nixPkgs = [
+  "glib",
+  "nss_latest",
+  "libxkbcommon",
+  "libdrm",
+  "mesa",
+  "xorg.libxcb",
+  "xorg.libX11",
+  "gtk3",
+  "pango",
+  "atk",
+  "cairo",
+  "alsa-lib"
+]
