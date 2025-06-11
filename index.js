@@ -12,26 +12,49 @@ app.use(express.json());
 let qrCodeBase64 = null;
 let isReady = false;
 
-// Função para encontrar o Chromium no Nixpacks
+// Função melhorada para encontrar o Chromium no Nixpacks
 function findChromiumPath() {
   const fs = require('fs');
+  const { execSync } = require('child_process');
+  
   const paths = [
-    process.env.CHROME_PATH,
     process.env.CHROMIUM_PATH,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome'
+    process.env.CHROME_PATH
   ];
   
+  // Primeiro tenta os caminhos das variáveis de ambiente
   for (const path of paths) {
-    if (path && fs.existsSync(path)) {
-      console.log(`Executável encontrado em: ${path}`);
-      return path;
+    if (path) {
+      try {
+        // Se tem wildcard, expande o caminho
+        if (path.includes('*')) {
+          const expandedPath = execSync(`ls ${path} 2>/dev/null | head -1`, { encoding: 'utf8' }).trim();
+          if (expandedPath && fs.existsSync(expandedPath)) {
+            console.log(`Chromium encontrado via wildcard: ${expandedPath}`);
+            return expandedPath;
+          }
+        } else if (fs.existsSync(path)) {
+          console.log(`Chromium encontrado: ${path}`);
+          return path;
+        }
+      } catch (error) {
+        console.log(`Erro ao verificar path ${path}:`, error.message);
+      }
     }
   }
   
-  console.log('Deixando Puppeteer encontrar automaticamente');
+  // Se não encontrou, tenta buscar automaticamente no Nix store
+  try {
+    const nixStorePath = execSync('find /nix/store -name chromium -type f -executable 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
+    if (nixStorePath && fs.existsSync(nixStorePath)) {
+      console.log(`Chromium encontrado no Nix store: ${nixStorePath}`);
+      return nixStorePath;
+    }
+  } catch (error) {
+    console.log('Não foi possível buscar no Nix store:', error.message);
+  }
+  
+  console.log('Chromium não encontrado, deixando Puppeteer detectar automaticamente');
   return undefined;
 }
 
@@ -49,7 +72,10 @@ const client = new Client({
       '--single-process',
       '--disable-gpu',
       '--disable-web-security',
-      '--disable-features=VizDisplayCompositor'
+      '--disable-features=VizDisplayCompositor',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
     ]
   },
   authStrategy: new LocalAuth({ dataPath: './sessions' })
