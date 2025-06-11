@@ -3,6 +3,8 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const cors = require('cors');
 
+process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -32,12 +34,12 @@ const client = new Client({
 client.on('qr', async (qr) => {
   qrCodeBase64 = await qrcode.toDataURL(qr);
   isReady = false;
-  console.log('📲 Escaneie o QR Code para conectar ao WhatsApp');
+  console.log('Escaneie o QR Code para conectar ao WhatsApp');
 });
 
 client.on('ready', () => {
   isReady = true;
-  console.log('✅ WhatsApp conectado!');
+  console.log('WhatsApp conectado!');
 });
 
 client.initialize();
@@ -75,5 +77,5 @@ app.post('/send-message', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor rodando em http://localhost:${port}`);
+  console.log(`Servidor rodando em http://localhost:${port}`);
 });
