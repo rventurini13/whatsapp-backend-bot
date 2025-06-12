@@ -170,7 +170,7 @@ async function getAvailableSlots(userId, date, duration) {
 // Página inicial
 app.get('/', (req, res) => {
   res.send(`
-    <h1>WhatsApp Bot Multi-Usuário</h1>
+    <h1>WhatsApp Bot Multi-Usuário - VERSÃO ATUALIZADA</h1>
     <p>Servidor rodando na porta ${port}</p>
     <p>Endpoints disponíveis:</p>
     <ul>
