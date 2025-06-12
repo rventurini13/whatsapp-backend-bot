@@ -1168,6 +1168,26 @@ setInterval(() => {
 }, 30 * 60 * 1000);
 
 // Iniciar servidor
+// ===== ROTA DE DEBUG - ADICIONAR ANTES DO app.listen =====
+app.get('/debug', (req, res) => {
+  res.json({
+    status: 'Railway funcionando',
+    supabaseUrl: process.env.SUPABASE_URL || 'VARIÁVEL NÃO ENCONTRADA',
+    supabaseKeyExists: !!process.env.SUPABASE_ANON_KEY,
+    supabaseKeyLength: process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.length : 0,
+    supabaseUrlFromCode: supabaseUrl,
+    supabaseKeyFromCode: supabaseKey ? 'PRESENTE' : 'AUSENTE',
+    nodeVersion: process.version,
+    timestamp: new Date().toISOString(),
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT
+    }
+  });
+});
+
+// Iniciar servidor
+app.listen(port, () => {
 app.listen(port, () => {
   console.log(`🚀 Servidor rodando na porta ${port}`);
   console.log(`📱 WhatsApp Bot Multi-Usuário ativo!`);
