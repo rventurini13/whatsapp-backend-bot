@@ -11,6 +11,15 @@ const supabaseUrl = process.env.SUPABASE_URL || 'https://pvbvznvgdrpnzorevxp.sup
 const supabaseKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2YnZ6bnl2Z2RycG56b3JldnhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk1NzM2MTMsImV4cCI6MjA2NTE0OTYxM30.Nnvp0kw5G_yOG7S-5VGc1XrUYTjpYNrt8lz6hLkR0vI';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// ADICIONAR ESTAS LINHAS PARA DEBUG:
+console.log('🔍 DEBUG - URL do Supabase:', supabaseUrl);
+console.log('🔍 DEBUG - Key do Supabase:', supabaseKey ? 'PRESENTE' : 'AUSENTE');
+console.log('🔍 DEBUG - Testando conexão...');
+
+const app = express();
+
 const app = express();
 const port = process.env.PORT || 8080;
 
