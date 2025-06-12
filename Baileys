@@ -1,0 +1,5 @@
+# Instalar a Baileys (versão mais recente)
+npm install @whiskeysockets/baileys
+
+# Instalar a biblioteca de WebSocket (muito popular e simples)
+npm install ws
