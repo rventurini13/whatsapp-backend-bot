@@ -1,278 +1,332 @@
-const express = require('express');
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { createClient } = require('@supabase/supabase-js');
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
+import fetch from 'node-fetch';
+
+// Carregar variáveis de ambiente
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 8080;
 
 // Configuração do Supabase
-const supabaseUrl = process.env.SUPABASE_URL || 'https://pvbvznvgdrpnzorevxp.supabase.co';
-const supabaseKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2YnZ6bnl2Z2RycG56b3JldnhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk1NzM2MTMsImV4cCI6MjA2NTE0OTYxM30.Nnvp0kw5G_yOG7S-5VGc1XrUYTjpYNrt8lz6hLkR0vI';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
 
-// LOGS DE DEBUG
 console.log('🔍 DEBUG - URL do Supabase:', supabaseUrl);
 console.log('🔍 DEBUG - Key do Supabase:', supabaseKey ? 'PRESENTE' : 'AUSENTE');
 console.log('🔍 DEBUG - Testando conexão...');
 
-const app = express();
-const port = process.env.PORT || 8080;
+// Criar cliente Supabase com opções adicionais
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+  global: {
+    fetch: fetch,
+    headers: {
+      'User-Agent': 'WhatsApp-Bot-Server/1.0',
+    },
+  },
+});
 
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Armazenar múltiplas instâncias de clientes WhatsApp
-const clients = new Map();
-const qrCodes = new Map();
-const clientStatus = new Map();
-
-// Sistema de conversas ativas
-const activeConversations = new Map(); // phoneNumber -> conversationState
-
-// Middleware para validar userId
-function validateUserId(req, res, next) {
-  const { userId } = req.params;
-  if (!userId) {
-    return res.status(400).json({ error: 'userId é obrigatório' });
-  }
-  req.userId = userId;
-  next();
-}
-
-// ===== FUNÇÕES AUXILIARES PARA O BOT =====
-
-// Buscar serviços ativos do usuário (para o bot)
-async function getUserServices(userId) {
-  try {
-    const { data, error } = await supabase
-      .from('user_services')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('active', true)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
-  } catch (error) {
-    console.error('Erro ao buscar serviços do usuário:', error);
-    return [];
-  }
-}
-
-// Buscar profissionais ativos do usuário (para o bot)
-async function getUserProfessionals(userId) {
-  try {
-    const { data, error } = await supabase
-      .from('user_professionals')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('active', true)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
-  } catch (error) {
-    console.error('Erro ao buscar profissionais do usuário:', error);
-    return [];
-  }
-}
-
-// Buscar fluxograma ativo do usuário (para o bot)
-async function getUserFlow(userId) {
-  try {
-    const { data, error } = await supabase
-      .from('user_flows')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('active', true)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (error && error.code !== 'PGRST116') throw error;
-    return data || null;
-  } catch (error) {
-    console.error('Erro ao buscar fluxograma do usuário:', error);
-    return null;
-  }
-}
-
-// Buscar configuração do bot para um usuário
-async function getUserBotConfig(userId) {
-  try {
-    const flow = await getUserFlow(userId);
-    if (flow) {
-      return flow;
-    }
-    
-    // Configuração padrão se não houver fluxograma personalizado
-    return {
-      welcome_message: 'Olá! Bem-vindo(a)! 😊\n\nComo posso ajudá-lo(a) hoje?',
-      services_message: 'Aqui estão nossos serviços disponíveis:\n\n',
-      date_message: 'Por favor, informe a data desejada (formato: dd/mm/aaaa):',
-      time_message: 'Escolha um dos horários disponíveis:\n\n',
-      professional_message: 'Escolha o profissional de sua preferência:\n\n',
-      confirmation_message: 'Por favor, confirme os dados do seu agendamento:\n\n',
-      completed_message: '✅ Agendamento confirmado com sucesso!\n\nObrigado por escolher nossos serviços!',
-      invalid_message: 'Opção inválida. Por favor, tente novamente.'
-    };
-  } catch (error) {
-    console.error('Erro ao buscar configuração do bot:', error);
-    return null;
-  }
-}
-
-// Buscar horários disponíveis
-async function getAvailableSlots(userId, date, duration) {
-  try {
-    // Buscar agendamentos do dia
-    const { data: appointments, error } = await supabase
-      .from('appointments')
-      .select('appointment_time, duration')
-      .eq('user_id', userId)
-      .eq('appointment_date', date)
-      .eq('status', 'confirmed');
-
-    if (error) throw error;
-
-    // Buscar configurações de horário do negócio
-    const { data: business } = await supabase
-      .from('user_business_config')
-      .select('working_hours')
-      .eq('user_id', userId)
-      .single();
-
-    // Horários padrão se não houver configuração
-    let allSlots = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'];
-    
-    // Se houver configuração de horário de trabalho, usar ela
-    if (business && business.working_hours) {
-      // TODO: Implementar lógica baseada em working_hours
-      // Por enquanto usar os horários padrão
-    }
-    
-    const occupiedSlots = (appointments || []).map(apt => apt.appointment_time);
-    
-    return allSlots.filter(slot => !occupiedSlots.includes(slot));
-  } catch (error) {
-    console.error('Erro ao buscar horários disponíveis:', error);
-    return ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00']; // Fallback
-  }
-}
-
-// ===== APIS PRINCIPAIS =====
-
-// Página inicial
+// Rota principal
 app.get('/', (req, res) => {
   res.send(`
-    <h1>WhatsApp Bot Multi-Usuário - VERSÃO ATUALIZADA</h1>
-    <p>Servidor rodando na porta ${port}</p>
-    <p>Endpoints disponíveis:</p>
-    <ul>
-      <li>GET /api/qr/:userId - Obter QR Code</li>
-      <li>GET /api/status/:userId - Status da conexão</li>
-      <li>GET /api/services/:userId - Listar serviços</li>
-      <li>GET /api/professionals/:userId - Listar profissionais</li>
-      <li>GET /api/appointments/:userId - Listar agendamentos</li>
-      <li>POST /api/send/:userId - Enviar mensagem</li>
-      <li>POST /api/disconnect/:userId - Desconectar</li>
-    </ul>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>WhatsApp Bot Backend</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 40px;
+          background-color: #f0f0f0;
+        }
+        .container {
+          background-color: white;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+          color: #25D366;
+        }
+        .endpoint {
+          background-color: #f8f8f8;
+          padding: 10px;
+          margin: 10px 0;
+          border-radius: 4px;
+          font-family: monospace;
+        }
+        .method {
+          font-weight: bold;
+          color: #007bff;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>WhatsApp Bot Multi-Usuário - VERSÃO ATUALIZADA</h1>
+        <p>Servidor rodando na porta ${PORT}</p>
+        <h3>Endpoints disponíveis:</h3>
+        <div class="endpoint">
+          <span class="method">GET</span> /api/qr/:userId - Obter QR Code
+        </div>
+        <div class="endpoint">
+          <span class="method">GET</span> /api/status/:userId - Status da conexão
+        </div>
+        <div class="endpoint">
+          <span class="method">GET</span> /api/services/:userId - Listar serviços
+        </div>
+        <div class="endpoint">
+          <span class="method">GET</span> /api/professionals/:userId - Listar profissionais
+        </div>
+        <div class="endpoint">
+          <span class="method">GET</span> /api/appointments/:userId - Listar agendamentos
+        </div>
+        <div class="endpoint">
+          <span class="method">POST</span> /api/send/:userId - Enviar mensagem
+        </div>
+        <div class="endpoint">
+          <span class="method">POST</span> /api/disconnect/:userId - Desconectar
+        </div>
+      </div>
+    </body>
+    </html>
   `);
 });
 
-// ===== APIS DO SUPABASE =====
+// Rota de debug para verificar variáveis de ambiente do Railway
+app.get('/debug', (req, res) => {
+  const railwayVars = {
+    RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT,
+    RAILWAY_PROJECT_ID: process.env.RAILWAY_PROJECT_ID,
+    RAILWAY_SERVICE_ID: process.env.RAILWAY_SERVICE_ID,
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    SUPABASE_URL: process.env.SUPABASE_URL ? 'CONFIGURADO' : 'NÃO CONFIGURADO',
+    SUPABASE_KEY: process.env.SUPABASE_KEY ? 'CONFIGURADO' : 'NÃO CONFIGURADO'
+  };
+  
+  res.json({
+    status: 'Railway funcionando',
+    funcionando: 'supabase',
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseKey: process.env.SUPABASE_KEY ? 'true' : 'false',
+    supabaseKeyLength: process.env.SUPABASE_KEY?.length || 0,
+    supabaseUrlFromCode: supabaseUrl,
+    supabaseKeyFromCode: supabaseKey ? 'PRESENTE' : 'AUSENTE',
+    nodeVersion: process.version,
+    timestamp: new Date().toISOString()
+  });
+});
 
-// Listar serviços de um usuário
-app.get('/api/services/:userId', validateUserId, async (req, res) => {
+// Endpoint de teste de conexão com o banco
+app.get('/api/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('user_services')
-      .select('*')
-      .eq('user_id', req.userId)
-      .eq('active', true)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-
-    res.json({ services: data || [] });
+      .from('users')
+      .select('count')
+      .limit(1);
+    
+    if (error) {
+      return res.status(500).json({ 
+        status: 'error',
+        message: 'Falha na conexão com banco de dados',
+        error: error.message 
+      });
+    }
+    
+    res.json({ 
+      status: 'success',
+      message: 'Conexão com banco de dados OK',
+      supabaseUrl: process.env.SUPABASE_URL 
+    });
   } catch (error) {
-    console.error('Erro ao buscar serviços:', error);
-    res.status(500).json({ error: 'Erro ao buscar serviços' });
+    res.status(500).json({ 
+      status: 'error',
+      message: 'Erro ao testar conexão',
+      error: error.message 
+    });
   }
 });
 
-// Listar profissionais de um usuário
-app.get('/api/professionals/:userId', validateUserId, async (req, res) => {
+// Buscar serviços
+app.get('/api/services/:userId', async (req, res) => {
   try {
+    const { userId } = req.params;
+    console.log(`Buscando serviços para usuário: ${userId}`);
+    
+    // Teste de conexão primeiro
+    const { data: testData, error: testError } = await supabase
+      .from('users')
+      .select('id')
+      .limit(1);
+    
+    if (testError) {
+      console.error('Erro ao testar conexão com Supabase:', testError);
+      return res.status(500).json({ 
+        error: 'Erro de conexão com banco de dados',
+        details: testError.message 
+      });
+    }
+    
+    // Busca os serviços
     const { data, error } = await supabase
-      .from('user_professionals')
+      .from('services')
       .select('*')
-      .eq('user_id', req.userId)
-      .eq('active', true)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-
-    res.json({ professionals: data || [] });
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Erro ao buscar serviços:', error);
+      return res.status(500).json({ 
+        error: 'Erro ao buscar serviços',
+        details: error.message 
+      });
+    }
+    
+    res.json(data || []);
   } catch (error) {
-    console.error('Erro ao buscar profissionais:', error);
+    console.error('Erro não esperado:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
+
+// Buscar profissionais
+app.get('/api/professionals/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const { data, error } = await supabase
+      .from('professionals')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Erro ao buscar profissionais:', error);
+      return res.status(500).json({ error: 'Erro ao buscar profissionais' });
+    }
+    
+    res.json(data || []);
+  } catch (error) {
+    console.error('Erro ao buscar profissionais:', {
+      message: error.message,
+      details: error.toString()
+    });
     res.status(500).json({ error: 'Erro ao buscar profissionais' });
   }
 });
 
-// Listar agendamentos de um usuário
-app.get('/api/appointments/:userId', validateUserId, async (req, res) => {
+// Buscar agendamentos
+app.get('/api/appointments/:userId', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { userId } = req.params;
     
-    let query = supabase
+    const { data, error } = await supabase
       .from('appointments')
       .select(`
         *,
-        service:user_services(name, duration, price),
-        professional:user_professionals(name)
+        services (
+          name,
+          price,
+          duration
+        ),
+        professionals (
+          name
+        )
       `)
-      .eq('user_id', req.userId)
-      .order('appointment_date', { ascending: true })
-      .order('appointment_time', { ascending: true });
-
-    if (date) {
-      query = query.eq('appointment_date', date);
+      .eq('user_id', userId)
+      .order('appointment_date', { ascending: true });
+    
+    if (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      return res.status(500).json({ error: 'Erro ao buscar agendamentos' });
     }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    res.json({ appointments: data || [] });
+    
+    res.json(data || []);
   } catch (error) {
-    console.error('Erro ao buscar agendamentos:', error);
+    console.error('Erro ao buscar agendamentos:', {
+      message: error.message,
+      details: error.toString()
+    });
     res.status(500).json({ error: 'Erro ao buscar agendamentos' });
   }
 });
 
-// ===== ROTA DE DEBUG =====
-app.get('/debug', (req, res) => {
+// Rota para enviar mensagem (exemplo)
+app.post('/api/send/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { message, to } = req.body;
+    
+    // Aqui você implementaria a lógica de envio de mensagem
+    // Por enquanto, apenas retorna sucesso
+    res.json({ 
+      success: true, 
+      message: 'Mensagem enviada',
+      userId,
+      to,
+      sentAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Erro ao enviar mensagem:', error);
+    res.status(500).json({ error: 'Erro ao enviar mensagem' });
+  }
+});
+
+// Rota para obter QR Code (exemplo)
+app.get('/api/qr/:userId', (req, res) => {
+  const { userId } = req.params;
+  
+  // Aqui você implementaria a lógica de geração do QR Code
+  // Por enquanto, apenas retorna um status
   res.json({
-    status: 'Railway funcionando',
-    supabaseUrl: process.env.SUPABASE_URL || 'VARIÁVEL NÃO ENCONTRADA',
-    supabaseKeyExists: !!process.env.SUPABASE_ANON_KEY,
-    supabaseKeyLength: process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.length : 0,
-    supabaseUrlFromCode: supabaseUrl,
-    supabaseKeyFromCode: supabaseKey ? 'PRESENTE' : 'AUSENTE',
-    nodeVersion: process.version,
-    timestamp: new Date().toISOString(),
-    env: {
-      NODE_ENV: process.env.NODE_ENV,
-      PORT: process.env.PORT
-    }
+    userId,
+    status: 'pending',
+    message: 'QR Code será gerado quando WhatsApp estiver conectado'
+  });
+});
+
+// Rota para status da conexão
+app.get('/api/status/:userId', (req, res) => {
+  const { userId } = req.params;
+  
+  // Aqui você implementaria a lógica de verificação de status
+  // Por enquanto, apenas retorna desconectado
+  res.json({
+    userId,
+    connected: false,
+    status: 'disconnected'
+  });
+});
+
+// Rota para desconectar
+app.post('/api/disconnect/:userId', (req, res) => {
+  const { userId } = req.params;
+  
+  // Aqui você implementaria a lógica de desconexão
+  res.json({
+    userId,
+    success: true,
+    message: 'Desconectado com sucesso'
   });
 });
 
 // Iniciar servidor
-app.listen(port, () => {
-  console.log(`🚀 Servidor rodando na porta ${port}`);
-  console.log(`📱 WhatsApp Bot Multi-Usuário ativo!`);
-  console.log(`🔗 Acesse: http://localhost:${port}`);
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log('📱 WhatsApp Bot Multi-Usuário ativo!');
+  console.log(`🔗 Acesse: http://localhost:${PORT}`);
 });
