@@ -1,16 +1,25 @@
 {
-  "name": "whatsapp-backend",
+  "name": "whatsapp-backend-bot",
   "version": "1.0.0",
-  "type": "commonjs",
+  "description": "Backend para WhatsApp Bot Multi-Usuário",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "express": "^4.18.2", 
-    "qrcode": "^1.5.3",
-    "whatsapp-web.js": "^1.21.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "dotenv": "^16.3.1",
+    "node-fetch": "^3.3.2",
+    "undici": "^6.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
